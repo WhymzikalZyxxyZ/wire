@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: wire
+
+server:
+  port: 8081
+
+# No broker connection is configured yet — deliberately. Wiring a real
+# Redpanda/Kafka bootstrap-servers address belongs with the first
+# consumer/producer implementation, not the skeleton.
+# See docs/adr/001-stack-and-broker.md.
