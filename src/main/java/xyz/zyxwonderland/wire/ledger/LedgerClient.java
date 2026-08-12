@@ -2,6 +2,7 @@ package xyz.zyxwonderland.wire.ledger;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
@@ -16,14 +17,27 @@ import xyz.zyxwonderland.wire.event.WireTransactionEvent;
  * (transient — retry). {@code event.eventId()} is passed to LEDGER
  * verbatim as {@code idempotencyKey} — see ADR-002's Notes for why the
  * field is renamed at this exact boundary.
+ *
+ * <p>Explicit connect/read timeouts (found missing in a post-implementation
+ * code survey — see docs/RISKS.md) are what actually make a hung LEDGER
+ * instance surface as {@link ResourceAccessException} at all: without
+ * them, a connection that never closes would block the consumer thread
+ * indefinitely instead of ever reaching the transient-failure retry path.
  */
 @Component
 public class LedgerClient {
 
     private final RestClient restClient;
 
-    public LedgerClient(RestClient.Builder builder, @Value("${wire.ledger.base-url}") String baseUrl) {
-        this.restClient = builder.baseUrl(baseUrl).build();
+    public LedgerClient(
+            RestClient.Builder builder,
+            @Value("${wire.ledger.base-url}") String baseUrl,
+            @Value("${wire.ledger.connect-timeout-ms:5000}") int connectTimeoutMs,
+            @Value("${wire.ledger.read-timeout-ms:10000}") int readTimeoutMs) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(connectTimeoutMs);
+        requestFactory.setReadTimeout(readTimeoutMs);
+        this.restClient = builder.baseUrl(baseUrl).requestFactory(requestFactory).build();
     }
 
     public LedgerResult submit(WireTransactionEvent event) {

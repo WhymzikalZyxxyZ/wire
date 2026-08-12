@@ -23,6 +23,11 @@ wire:
   ledger:
     # The base URL of the LEDGER instance this consumer posts to.
     base-url: ${LEDGER_BASE_URL}
+    # Without these, a hung LEDGER instance blocks the consumer thread
+    # indefinitely instead of ever surfacing as a retryable transient
+    # failure. See docs/RISKS.md.
+    connect-timeout-ms: 5000
+    read-timeout-ms: 10000
   retry:
     max-attempts: 3
     initial-backoff-ms: 200

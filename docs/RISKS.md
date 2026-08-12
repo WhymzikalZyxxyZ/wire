@@ -56,6 +56,18 @@ Per ADR-003's Notes, retries are a blocking loop (`Thread.sleep` between attempt
 
 **Mitigation stance:** accepted — chosen deliberately for simplicity and testability over the more idiomatic-but-harder-to-verify-blind `@RetryableTopic` approach. Named as a real upgrade path, not a hidden limitation, if consumer throughput under partial outages ever became the actual bottleneck.
 
+## LedgerClient had no request timeout — RESOLVED (was undocumented)
+
+A code-level survey found `LedgerClient`'s `RestClient` had no connect or read timeout configured. Without one, a LEDGER instance that hangs (accepts the connection but never responds) would never throw `ResourceAccessException` — the consumer thread would block indefinitely instead of ever reaching the transient-failure retry path ADR-003 describes.
+
+**Mitigation stance:** resolved. `LedgerClient` now builds its `RestClient` with an explicit `SimpleClientHttpRequestFactory` (`wire.ledger.connect-timeout-ms` / `read-timeout-ms`, defaulting to 5s/10s) — a timeout now reliably surfaces as `ResourceAccessException`, which was already mapped to the transient/retry path.
+
+## No escalation if the DLQ publish itself fails — RESOLVED, with an accepted tradeoff (was undocumented)
+
+A code-level survey found that `DeadLetterPublisher.publish()` threw an uncaught exception straight out of the listener's message handler, before `acknowledgment.acknowledge()` ever ran. If the DLQ broker path itself were unreachable (not just LEDGER), the event would redeliver forever and block that partition indefinitely — the exact head-of-line-blocking failure mode ADR-003 exists to prevent, reintroduced one layer deeper than it was designed for.
+
+**Mitigation stance:** resolved, with a real, named tradeoff. `TransactionEventListener` now catches this specific failure (`DeadLetterPublishException`), logs it at ERROR with a "manual recovery required" marker, and still acknowledges the offset — trading guaranteed DLQ durability for avoiding an infinite redelivery lock-up in this rare double-failure case (LEDGER *and* the DLQ path both unreachable at once). The failure is still recorded, just in application logs rather than the durable DLQ topic. A real production system would want a true last-resort sink (local disk, a paging alert) here — that remains a real gap, not solved by this fix, just no longer silent.
+
 ## DLQ reprocessing is undesigned — MEDIUM (open item)
 
 Per `docs/architecture/overview.md`, events land on `wire.transactions.dlq` on terminal failure, but there's no designed mechanism yet for inspecting, correcting, and replaying them back into the pipeline.

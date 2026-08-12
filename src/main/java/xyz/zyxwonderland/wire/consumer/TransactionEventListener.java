@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
+import xyz.zyxwonderland.wire.dlq.DeadLetterPublishException;
 import xyz.zyxwonderland.wire.dlq.DeadLetterPublisher;
 import xyz.zyxwonderland.wire.event.WireTransactionEvent;
 import xyz.zyxwonderland.wire.ledger.LedgerClient;
@@ -56,7 +57,7 @@ public class TransactionEventListener {
                 return;
             } catch (LedgerValidationException e) {
                 log.warn("event {} rejected by LEDGER, routing to DLQ: {}", event.eventId(), e.getMessage());
-                deadLetterPublisher.publish(event, e.getMessage());
+                publishToDeadLetterOrEscalate(event, e.getMessage());
                 return;
             } catch (LedgerUnavailableException e) {
                 attempt++;
@@ -64,7 +65,7 @@ public class TransactionEventListener {
                     log.warn(
                             "event {} exhausted {} retries, routing to DLQ",
                             event.eventId(), retryPolicy.maxAttempts());
-                    deadLetterPublisher.publish(event, "exhausted retries: " + e.getMessage());
+                    publishToDeadLetterOrEscalate(event, "exhausted retries: " + e.getMessage());
                     return;
                 }
                 Duration backoff = retryPolicy.backoffFor(attempt);
@@ -73,6 +74,33 @@ public class TransactionEventListener {
                         event.eventId(), attempt, retryPolicy.maxAttempts(), backoff);
                 sleep(backoff);
             }
+        }
+    }
+
+    /**
+     * The DLQ is meant to be the last resort — but if the DLQ publish
+     * itself fails (found in a post-implementation code survey: previously
+     * an uncaught exception here would skip {@code acknowledgment.acknowledge()}
+     * entirely, causing the broker to redeliver this event forever and
+     * blocking the partition indefinitely, the exact head-of-line-blocking
+     * failure mode ADR-003 exists to prevent — just one layer deeper than
+     * it was designed for), there's no further durable fallback to reach
+     * for. Logging at ERROR and letting the caller still acknowledge trades
+     * guaranteed DLQ durability for avoiding that infinite-redelivery
+     * lock-up in this rare double-failure case (LEDGER *and* the broker's
+     * DLQ path both unreachable at once). A real production system would
+     * want a true last-resort sink (local disk, a paging alert) here —
+     * named as an accepted gap in docs/RISKS.md, not a hidden one.
+     */
+    private void publishToDeadLetterOrEscalate(WireTransactionEvent event, String reason) {
+        try {
+            deadLetterPublisher.publish(event, reason);
+        } catch (DeadLetterPublishException e) {
+            log.error(
+                    "CRITICAL: event {} failed at LEDGER ({}) AND failed to publish to the DLQ ({}); "
+                            + "acknowledging anyway to avoid blocking this partition forever — "
+                            + "this event's failure is recorded only in this log line, manual recovery required",
+                    event.eventId(), reason, e.getMessage(), e);
         }
     }
 

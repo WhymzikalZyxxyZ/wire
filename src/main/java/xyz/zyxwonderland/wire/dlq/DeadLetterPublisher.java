@@ -29,15 +29,16 @@ public class DeadLetterPublisher {
         this.dlqTopic = dlqTopic;
     }
 
+    /** @throws DeadLetterPublishException if the DLQ itself can't be reached — see TransactionEventListener. */
     public void publish(WireTransactionEvent event, String reason) {
         var envelope = new DeadLetterEnvelope(event, reason, Instant.now());
         try {
             kafkaTemplate.send(dlqTopic, event.partitionKey().toString(), envelope).get(10, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted publishing to DLQ for event " + event.eventId(), e);
+            throw new DeadLetterPublishException("interrupted publishing to DLQ for event " + event.eventId(), e);
         } catch (ExecutionException | TimeoutException e) {
-            throw new IllegalStateException("failed to publish to DLQ for event " + event.eventId(), e);
+            throw new DeadLetterPublishException("failed to publish to DLQ for event " + event.eventId(), e);
         }
     }
 }
