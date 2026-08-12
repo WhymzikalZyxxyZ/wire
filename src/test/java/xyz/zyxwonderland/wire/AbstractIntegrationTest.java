@@ -36,7 +36,7 @@ public abstract class AbstractIntegrationTest {
     static final RedpandaContainer redpanda =
             new RedpandaContainer(DockerImageName.parse("redpandadata/redpanda:v24.2.4"));
 
-    static final WireMockServer ledgerStub = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+    public static final WireMockServer ledgerStub = new WireMockServer(WireMockConfiguration.options().dynamicPort());
 
     static {
         redpanda.start();

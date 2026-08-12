@@ -25,7 +25,7 @@ import xyz.zyxwonderland.wire.dlq.DeadLetterEnvelope;
 @Component
 public class DlqCapture {
 
-    final BlockingQueue<DeadLetterEnvelope> received = new LinkedBlockingQueue<>();
+    public final BlockingQueue<DeadLetterEnvelope> received = new LinkedBlockingQueue<>();
 
     @Bean
     public ConsumerFactory<String, DeadLetterEnvelope> dlqConsumerFactory(
