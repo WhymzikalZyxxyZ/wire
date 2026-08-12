@@ -68,6 +68,12 @@ A code-level survey found that `DeadLetterPublisher.publish()` threw an uncaught
 
 **Mitigation stance:** resolved, with a real, named tradeoff. `TransactionEventListener` now catches this specific failure (`DeadLetterPublishException`), logs it at ERROR with a "manual recovery required" marker, and still acknowledges the offset — trading guaranteed DLQ durability for avoiding an infinite redelivery lock-up in this rare double-failure case (LEDGER *and* the DLQ path both unreachable at once). The failure is still recorded, just in application logs rather than the durable DLQ topic. A real production system would want a true last-resort sink (local disk, a paging alert) here — that remains a real gap, not solved by this fix, just no longer silent.
 
+## No REST-layer error handling for a producer publish failure — RESOLVED (was undocumented)
+
+A further code survey found `EventController`'s `POST /events` had no handler for a Kafka publish failure (the broker unreachable, or an unacknowledged send) — it fell through to Spring Boot's default, unstructured error response instead of this API's own `ErrorResponse` shape.
+
+**Mitigation stance:** resolved. `EventProducer.publish()` now throws a dedicated `EventPublishException`, mapped by `ApiExceptionHandler` to `503 Service Unavailable` (not `500`) — the request itself was valid; the broker WIRE depends on wasn't reachable, a meaningfully different and retryable condition for the caller. A catch-all `Exception` handler was also added so any other unexpected failure still returns the consistent error shape rather than leaking implementation details.
+
 ## DLQ reprocessing is undesigned — MEDIUM (open item)
 
 Per `docs/architecture/overview.md`, events land on `wire.transactions.dlq` on terminal failure, but there's no designed mechanism yet for inspecting, correcting, and replaying them back into the pipeline.

@@ -29,14 +29,15 @@ public class EventProducer {
         this.rawTopic = rawTopic;
     }
 
+    /** @throws EventPublishException if the broker can't be reached — see EventController's handling. */
     public void publish(WireTransactionEvent event) {
         try {
             kafkaTemplate.send(rawTopic, event.partitionKey().toString(), event).get(10, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted publishing event " + event.eventId(), e);
+            throw new EventPublishException("interrupted publishing event " + event.eventId(), e);
         } catch (ExecutionException | TimeoutException e) {
-            throw new IllegalStateException("failed to publish event " + event.eventId(), e);
+            throw new EventPublishException("failed to publish event " + event.eventId(), e);
         }
     }
 }
