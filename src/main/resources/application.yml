@@ -31,6 +31,10 @@ wire:
   retry:
     max-attempts: 3
     initial-backoff-ms: 200
+  producer:
+    # No default — POST /events must fail fast without a real key rather
+    # than accept unauthenticated traffic. See docs/RISKS.md.
+    api-key: ${WIRE_PRODUCER_API_KEY}
 
 server:
   port: 8081

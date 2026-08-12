@@ -41,7 +41,7 @@ cd wire
 mvn compile
 ```
 
-Requires JDK 21 and Maven. Running the app (`mvn spring-boot:run`) requires `KAFKA_BOOTSTRAP_SERVERS` and `LEDGER_BASE_URL` set — no defaults are provided, by design (see [`application.yml`](src/main/resources/application.yml)). Running the test suite (`mvn test`) requires Docker, for Testcontainers.
+Requires JDK 21 and Maven. Running the app (`mvn spring-boot:run`) requires `KAFKA_BOOTSTRAP_SERVERS`, `LEDGER_BASE_URL`, and `WIRE_PRODUCER_API_KEY` set — no defaults are provided, by design (see [`application.yml`](src/main/resources/application.yml)). `WIRE_PRODUCER_API_KEY` is the shared secret `POST /events` requires in an `X-API-Key` header (see [`docs/RISKS.md`](docs/RISKS.md)). Running the test suite (`mvn test`) requires Docker, for Testcontainers.
 
 ## License
 

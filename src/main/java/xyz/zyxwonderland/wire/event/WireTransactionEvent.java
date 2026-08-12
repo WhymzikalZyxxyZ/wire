@@ -3,6 +3,8 @@ package xyz.zyxwonderland.wire.event;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -14,11 +16,18 @@ import java.util.UUID;
  * separate messages, at the cost of assuming upstream sources emit whole
  * transactions rather than individual legs; that tradeoff is named in
  * docs/RISKS.md, not hidden.
+ *
+ * <p>Bounds found missing in a security audit: an unbounded entries list
+ * was a resource-exhaustion vector (mirrors the same finding in LEDGER);
+ * an unrestricted eventId let a caller embed control characters (CRLF) into
+ * a value that TransactionEventListener logs verbatim, a log-forging
+ * vector. eventId's pattern is restricted to what a real identifier
+ * (UUID, or any typical opaque ID scheme) actually looks like.
  */
 public record WireTransactionEvent(
-        @NotBlank String eventId,
-        String description,
-        @NotEmpty @Valid List<WireEntry> entries,
+        @NotBlank @Size(max = 255) @Pattern(regexp = "^[A-Za-z0-9_:.-]+$") String eventId,
+        @Size(max = 2000) String description,
+        @NotEmpty @Size(max = 100) @Valid List<WireEntry> entries,
         Instant occurredAt
 ) {
 

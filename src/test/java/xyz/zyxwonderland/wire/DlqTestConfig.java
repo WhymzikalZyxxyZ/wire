@@ -35,7 +35,8 @@ public class DlqTestConfig {
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "test-dlq-capture");
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         JsonDeserializer<DeadLetterEnvelope> deserializer =
-                new JsonDeserializer<>(DeadLetterEnvelope.class, objectMapper).trustedPackages("*");
+                new JsonDeserializer<>(DeadLetterEnvelope.class, objectMapper)
+                        .trustedPackages("xyz.zyxwonderland.wire.dlq", "xyz.zyxwonderland.wire.event");
         return new DefaultKafkaConsumerFactory<>(props, new StringDeserializer(), deserializer);
     }
 

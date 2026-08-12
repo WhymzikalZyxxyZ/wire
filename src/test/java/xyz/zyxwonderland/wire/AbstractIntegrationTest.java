@@ -47,6 +47,11 @@ public abstract class AbstractIntegrationTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("spring.kafka.bootstrap-servers", redpanda::getBootstrapServers);
         registry.add("wire.ledger.base-url", () -> "http://localhost:" + ledgerStub.port());
+        // ProducerApiKeyFilter requires this property to exist for the
+        // context to start at all — none of this suite's tests go through
+        // the HTTP layer (they call EventProducer directly), so the actual
+        // value is never exercised, only its presence.
+        registry.add("wire.producer.api-key", () -> "test-api-key");
     }
 
     @BeforeEach

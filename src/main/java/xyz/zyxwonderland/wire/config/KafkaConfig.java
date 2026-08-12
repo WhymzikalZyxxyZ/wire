@@ -87,8 +87,15 @@ public class KafkaConfig {
         // ADR-002: the offset only advances after a terminal outcome
         // (LEDGER success, or a DLQ publish) — never on a timer.
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        // A security audit flagged trustedPackages("*") as a real (if
+        // currently inert — see docs/RISKS.md) deserialization-gadget risk:
+        // the producer disables type-info headers so this deserializer
+        // always uses the fixed target class below regardless, but
+        // narrowing the trust list costs nothing and removes the risk
+        // outright if that assumption ever quietly changes.
         JsonDeserializer<WireTransactionEvent> valueDeserializer =
-                new JsonDeserializer<>(WireTransactionEvent.class, objectMapper).trustedPackages("*");
+                new JsonDeserializer<>(WireTransactionEvent.class, objectMapper)
+                        .trustedPackages("xyz.zyxwonderland.wire.event");
         valueDeserializer.setUseTypeMapperForKey(false);
         return new DefaultKafkaConsumerFactory<>(props, new StringDeserializer(), valueDeserializer);
     }

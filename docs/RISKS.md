@@ -74,6 +74,30 @@ A further code survey found `EventController`'s `POST /events` had no handler fo
 
 **Mitigation stance:** resolved. `EventProducer.publish()` now throws a dedicated `EventPublishException`, mapped by `ApiExceptionHandler` to `503 Service Unavailable` (not `500`) — the request itself was valid; the broker WIRE depends on wasn't reachable, a meaningfully different and retryable condition for the caller. A catch-all `Exception` handler was also added so any other unexpected failure still returns the consistent error shape rather than leaking implementation details.
 
+## POST /events was unauthenticated — RESOLVED (was HIGH, found by a security audit)
+
+A dedicated security-auditor pass found `POST /events` had no authentication, authorization, or rate limiting at all — no Spring Security dependency existed anywhere in the project. Anyone with network access could submit arbitrary fabricated `WireTransactionEvent` payloads, which flow through Kafka and get forwarded to LEDGER's `POST /transactions` verbatim, with a caller-chosen `eventId` used as LEDGER's idempotency key. This was the single most concrete, immediately-exploitable finding in the audit.
+
+**Mitigation stance:** resolved with a lightweight fix proportionate to the gap — a `ProducerApiKeyFilter` checking a shared-secret `X-API-Key` header (`wire.producer.api-key`, no default, fails fast) via constant-time comparison, scoped to `/events`. Full Spring Security wasn't pulled in for a single header check — this is a service-to-service ingestion point, not a public-facing UI, and a shared secret is the right amount of mechanism for that. A production deployment with multiple legitimate producers would want per-caller API keys or mTLS instead of one shared secret; noted as a real next step, not solved by this fix.
+
+## Unbounded event payloads — RESOLVED (was MEDIUM, found by a security audit)
+
+The same audit found `WireTransactionEvent.entries` had no upper bound (mirrors the identical finding already fixed in LEDGER), `eventId`/`description` had no length bound, and `WireEntry.amount`/`currency` had no precision/format bounds — matching gaps to LEDGER's own, since WIRE's event shape mirrors LEDGER's request shape closely.
+
+**Mitigation stance:** resolved. Added `@Size(max = 100)` to `entries`, `@Size(max = 255)` to `eventId`, `@Size(max = 2000)` to `description`, `@Digits(integer = 15, fraction = 4)` to `amount`, and `@Pattern(regexp = "^[A-Z]{3}$")` to `currency` — bounds chosen to match LEDGER's exactly, so a request that would be rejected at LEDGER's boundary is now rejected at WIRE's boundary first.
+
+## `eventId` had no charset restriction — log-forging vector — RESOLVED (was LOW, found by a security audit)
+
+`eventId` is caller-controlled and gets interpolated into SLF4J log lines in `TransactionEventListener` with no sanitization. A caller could embed CRLF/control characters to forge fake log lines.
+
+**Mitigation stance:** resolved. `eventId` is now restricted to `^[A-Za-z0-9_:.-]+$` — control characters (and anything else that isn't a normal identifier character) are rejected at the validation boundary, before the value is ever logged.
+
+## `JsonDeserializer.trustedPackages("*")` — RESOLVED (was LOW, found by a security audit)
+
+Both Kafka consumer factories (`KafkaConfig` for `WireTransactionEvent`, and the test-only `DlqTestConfig` for `DeadLetterEnvelope`) trusted every package on the classpath for deserialization. The audit's own verdict: this was low-risk *today* specifically because the producer disables type-info headers (`setAddTypeInfo(false)`), so the deserializer always falls back to its fixed target class regardless of the trust list — exploiting the wildcard would require an attacker who can already write raw bytes with a forged `__TypeId__` header directly onto the topic, a materially higher bar than the REST API.
+
+**Mitigation stance:** resolved anyway, since narrowing costs nothing. Both deserializers now declare only the specific packages they actually deserialize (`xyz.zyxwonderland.wire.event`, and `xyz.zyxwonderland.wire.dlq`/`xyz.zyxwonderland.wire.event` for the DLQ envelope) — removes the risk outright rather than relying on the type-info-header assumption holding forever.
+
 ## DLQ reprocessing is undesigned — MEDIUM (open item)
 
 Per `docs/architecture/overview.md`, events land on `wire.transactions.dlq` on terminal failure, but there's no designed mechanism yet for inspecting, correcting, and replaying them back into the pipeline.
