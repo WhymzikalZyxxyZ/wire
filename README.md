@@ -9,10 +9,11 @@ LEDGER proves synchronous correctness: once a transaction request has arrived, i
 ## Status
 
 This repository currently contains:
-- A minimal, buildable Spring Boot skeleton (`src/main/java/`) with no consumer, producer, or broker wiring yet
 - Full design documentation (this README, four ADRs, an architecture overview, a risk register)
+- A working producer (`POST /events`) and consumer (`TransactionEventListener`) implementing the flow in [`docs/architecture/overview.md`](docs/architecture/overview.md), including bounded retry with backoff and dead-letter routing
+- Integration tests (`TransactionEventFlowIntegrationTest`) proving the retry/DLQ contract against a real Redpanda broker (Testcontainers) with LEDGER's HTTP boundary stubbed — see [ADR-004](docs/adr/004-correctness-verification.md) for exactly what is and isn't covered
 
-Not yet built: the actual Kafka consumer/producer, the LEDGER-calling logic, and the correctness tests that would prove the claims below.
+Not yet built: a real upstream event source (the producer is a synthetic REST-triggered simulator), DLQ reprocessing/replay tooling, and deployment to Redpanda Cloud/Fly.io.
 
 ## Why these choices — and what each one is proving
 
@@ -20,9 +21,9 @@ Not yet built: the actual Kafka consumer/producer, the LEDGER-calling logic, and
 |---|---|---|
 | Broker | Redpanda (Kafka-wire-protocol-compatible) | Real partition/consumer-group/offset semantics — the actual mechanics of high-throughput event streaming, not a simplified queue ([ADR-001](docs/adr/001-stack-and-broker.md)) |
 | Delivery model | At-least-once broker delivery + LEDGER's existing idempotency guarantee | Effectively-once posting, built on a guarantee that's already independently proven, not a second idempotency system invented from scratch ([ADR-002](docs/adr/002-delivery-and-consistency.md)) |
-| Ordering | Partition key = accountId | Per-account ordering as a structural property of the partitioning scheme, not application-level bookkeeping that a future change could quietly break ([ADR-002](docs/adr/002-delivery-and-consistency.md)) |
-| Failure handling | Bounded retry + backoff for transient failures, immediate dead-letter routing for terminal ones | "Strict reliability" under real failure conditions — self-healing retries, and no single poison message can block an entire partition ([ADR-003](docs/adr/003-failure-handling.md)) |
-| Correctness verification | Integration tests against a real Redpanda broker (Testcontainers), with LEDGER's API contract stubbed at the boundary | The difference between *designed* correct and *proven* correct — not yet closed, tracked explicitly ([ADR-004](docs/adr/004-correctness-verification.md)) |
+| Event shape | One message = one whole balanced transaction | Avoids a stateful correlator to reassemble per-leg events, at a named tradeoff — see the architecture doc's "Resolved design decision" ([ADR-002](docs/adr/002-delivery-and-consistency.md)) |
+| Failure handling | Bounded retry + backoff for transient failures, immediate dead-letter routing for terminal ones | "Strict reliability" under real failure conditions — self-healing retries, and no single poison message can block an entire partition. Proven by `TransactionEventFlowIntegrationTest`, not just designed ([ADR-003](docs/adr/003-failure-handling.md)) |
+| Correctness verification | Integration tests against a real Redpanda broker (Testcontainers), with LEDGER's API contract stubbed at the boundary | The difference between *designed* correct and *proven* correct — closed for the retry/DLQ contract; ordering and crash-redelivery remain inherited guarantees, named explicitly rather than re-claimed ([ADR-004](docs/adr/004-correctness-verification.md)) |
 
 ## Architecture
 
@@ -30,7 +31,7 @@ See [`docs/architecture/overview.md`](docs/architecture/overview.md) for the top
 
 ## Risks & known gaps
 
-See [`docs/RISKS.md`](docs/RISKS.md) — read before treating any correctness claim here as more than design intent.
+See [`docs/RISKS.md`](docs/RISKS.md) — read before treating any correctness claim here as more than what's actually been tested.
 
 ## Building
 
@@ -40,7 +41,7 @@ cd wire
 mvn compile
 ```
 
-Requires JDK 21 and Maven. No broker connection is configured yet, so `mvn spring-boot:run` will not yet start a working application — that arrives with the first consumer/producer implementation.
+Requires JDK 21 and Maven. Running the app (`mvn spring-boot:run`) requires `KAFKA_BOOTSTRAP_SERVERS` and `LEDGER_BASE_URL` set — no defaults are provided, by design (see [`application.yml`](src/main/resources/application.yml)). Running the test suite (`mvn test`) requires Docker, for Testcontainers.
 
 ## License
 

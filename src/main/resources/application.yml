@@ -2,10 +2,23 @@ spring:
   application:
     name: wire
 
+  kafka:
+    # No default — the app must fail fast if these aren't set, rather than
+    # silently pointing at nothing. See docs/adr/001-stack-and-broker.md.
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:wire-consumer}
+
+wire:
+  topics:
+    raw: wire.transactions.raw
+    dlq: wire.transactions.dlq
+  ledger:
+    # The base URL of the LEDGER instance this consumer posts to.
+    base-url: ${LEDGER_BASE_URL}
+  retry:
+    max-attempts: 3
+    initial-backoff-ms: 200
+
 server:
   port: 8081
-
-# No broker connection is configured yet — deliberately. Wiring a real
-# Redpanda/Kafka bootstrap-servers address belongs with the first
-# consumer/producer implementation, not the skeleton.
-# See docs/adr/001-stack-and-broker.md.

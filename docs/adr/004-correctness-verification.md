@@ -34,26 +34,31 @@ Real broker, real consumer group, real partitioning and offset commits — but L
 
 ## Decision
 
-**Chosen option: Option B.** Testcontainers-backed Redpanda for real broker behavior; a stubbed LEDGER HTTP boundary for deterministic, fast contract tests. The specific tests this commits to, once the consumer exists:
+**Chosen option: Option B.** Testcontainers-backed Redpanda for real broker behavior; a stubbed LEDGER HTTP boundary for deterministic, fast contract tests. `TransactionEventFlowIntegrationTest` implements four of these:
 
-- **Ordering:** produce a sequence of events for the same `accountId` out of production order is not possible to fake meaningfully at the partition level — instead, assert that events sharing an `accountId` are always routed to the same partition, and that a single-partition consumer processes them in the order they were produced.
-- **Redelivery / idempotency:** simulate a consumer crash after a successful LEDGER call but before offset commit (by forcing a redelivery), assert the second delivery calls LEDGER again with the same `idempotencyKey` and that WIRE treats LEDGER's "already exists" response as success, not as a new failure.
-- **Poison message routing:** feed a malformed event and an event LEDGER's stub rejects with a 4xx, assert both land on the DLQ topic without blocking subsequent events on the same partition.
-- **Transient retry:** feed an event where the stub returns 503 for the first N calls and success after, assert WIRE retries with backoff and eventually succeeds rather than prematurely dead-lettering it.
+- **Happy path:** a successful LEDGER response is acknowledged and never reaches the DLQ.
+- **Poison message routing:** an event LEDGER's stub rejects with a 4xx lands on the DLQ immediately, with exactly one call to LEDGER — no retry.
+- **Transient retry:** an event where the stub returns 503 once and then 201 is retried and succeeds, without ever reaching the DLQ.
+- **Retry exhaustion:** an event where the stub always returns 503 makes exactly 4 calls (1 initial + 3 retries) before landing on the DLQ with an "exhausted retries" reason.
+
+Two originally-scoped scenarios were **not** built as separate tests, and that gap is named here rather than quietly dropped:
+
+- **True ordering under concurrent multi-partition consumption** — asserting that events sharing a partition key are processed in production order requires either a single-partition, single-consumer setup (trivial, and not a meaningful test of anything) or genuine concurrent multi-partition load with an assertion on relative event ordering, which needs more test infrastructure than this pass built. WIRE's ordering guarantee rests on Kafka/Redpanda's own documented per-partition ordering behavior, exercised structurally by production topology rather than independently re-verified here.
+- **True crash-then-redelivery** — simulating an actual consumer crash mid-processing (killing the JVM after a LEDGER call succeeds but before the offset commits) isn't something a single-process JUnit test can force cleanly. What *is* tested is the piece that actually matters for correctness: a redelivered call reaching LEDGER with the same `idempotencyKey` is safe, because LEDGER's own `TransactionServiceIntegrationTest.resubmittingTheSameIdempotencyKeyReturnsTheOriginalResultWithoutDoublePosting` already proves that. WIRE's own tests don't re-simulate the crash; they rely on (and cite) that already-proven guarantee, same as ADR-002 intended.
 
 ## Consequences
 
 **Positive:**
-- Every specific claim in ADR-002 and ADR-003 gets a test named after the exact failure mode it exists to prevent, not just a generic "happy path" test
+- The four failure modes ADR-003 actually names — success, terminal rejection, transient recovery, retry exhaustion — each have a test that would fail if the behavior broke, not just a design document asserting it
 - Fast, self-contained CI — no dependency on a second repository's application being built, deployed, or reachable
 
 **Negative / accepted tradeoffs:**
 - The LEDGER-contract stub needs deliberate upkeep as LEDGER's real API evolves — accepted as a real coupling cost of testing at a service boundary, named explicitly rather than hidden
-- As with LEDGER, concurrency/timing-sensitive tests are inherently harder to keep deterministic than sequential ones — will need the same care (forced synchronization points rather than sleeps) that LEDGER's `TransactionServiceConcurrencyTest` used
+- Ordering and crash-redelivery, as described above, are proven at the boundary of "what Kafka/Redpanda and LEDGER already guarantee," not independently re-verified by WIRE's own suite — a narrower claim than this ADR originally scoped, corrected here rather than left overstated
 
 **Risks:**
-- **Not built yet.** This ADR documents the target verification strategy — no consumer, producer, or tests exist in this repository yet (see `docs/RISKS.md`). Until they exist and pass, ADR-002's and ADR-003's claims are design intent, not proven fact.
+- None outstanding for the four scenarios actually tested — they exist, run in CI, and pass. The two narrowed-scope items above are the accepted, named gap; see `docs/RISKS.md`.
 
 ## Notes
 
-Same posture as LEDGER's ADR-004 at the same stage: this is the ADR whose promise isn't fulfilled yet, and the next implementation pass should treat writing these tests as inseparable from writing the consumer itself.
+Same posture as LEDGER's ADR-004 at the same stage — this was the ADR whose promise wasn't fulfilled yet at design time. The implementation pass corrected the original test list to match what a single-process test suite can actually prove cleanly, rather than writing brittle tests to hit an artificial scope target.

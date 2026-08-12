@@ -26,14 +26,32 @@ Per [ADR-001](adr/001-stack-and-broker.md), Redpanda is Kafka-wire-protocol-comp
 
 **Mitigation stance:** accepted — the properties under test (partitioning, consumer groups, offsets) are protocol-level and unaffected. A future pass could re-verify against real Kafka in CI if that operational fidelity ever became load-bearing.
 
-## Delivery/ordering/failure-handling correctness is designed but not yet proven — HIGH (tracked explicitly, not hidden)
+## Failure-handling correctness is now proven by tests for the scenarios that matter most — RESOLVED for retry/DLQ (was HIGH)
 
-ADR-002 and ADR-003 make specific claims (per-account ordering, no double-posting on redelivery, poison messages don't block a partition, transient failures self-heal). ADR-004 commits to proving these with real tests against a real broker.
+ADR-003's retry/DLQ claims (transient failures self-heal, terminal failures route to the DLQ without retry, exhausted retries dead-letter cleanly) are proven by `TransactionEventFlowIntegrationTest` against a real Redpanda broker with LEDGER's HTTP boundary stubbed.
 
-**Mitigation stance:** **as of this documentation phase, those tests don't exist yet, because no consumer/producer code exists yet either.** Until they're written and passing, treat the claims in ADR-002/003 as design intent, not verified fact — same discipline LEDGER applied at the same stage, and the same reason LEDGER's ADR-004 turned out to matter: the first real implementation pass caught a bug no design document would have.
+**Mitigation stance:** resolved for those four scenarios. See the next two entries for what's explicitly **not** independently re-verified by this suite.
+
+## True multi-partition ordering is not independently tested — MEDIUM (accepted, narrowed scope)
+
+ADR-002 claims per-partition-key ordering. WIRE's test suite does not run a genuine concurrent multi-partition load and assert on relative event ordering — that would need meaningfully more test infrastructure than this pass built (see ADR-004's Decision). What WIRE relies on instead is Kafka/Redpanda's own documented per-partition ordering guarantee, applied structurally via the partitioning scheme.
+
+**Mitigation stance:** accepted. The partitioning *scheme* is real and load-bearing; the *guarantee it depends on* is Kafka's own, not re-derived here. A future pass adding a genuine ordering test (multiple producers, one partition, asserted processing order) would close this gap outright.
+
+## Crash-then-redelivery is not independently simulated — MEDIUM (accepted, narrowed scope)
+
+ADR-002 claims a consumer crash before offset commit is safe (the broker redelivers, and LEDGER's idempotency key makes the repeat a no-op). WIRE's test suite doesn't kill a JVM mid-processing to force this — a single-process JUnit suite can't do that cleanly. What's actually tested is the piece that matters: LEDGER's own `TransactionServiceIntegrationTest.resubmittingTheSameIdempotencyKeyReturnsTheOriginalResultWithoutDoublePosting` already proves a repeated call with the same idempotency key is safe. WIRE's claim rests on that, not a re-simulation of the crash itself.
+
+**Mitigation stance:** accepted — this is the intended design (ADR-002 explicitly builds on LEDGER's already-proven guarantee rather than reproving it). A meaningfully stronger test here would need multi-process or container-restart-based test infrastructure, which is a real but disproportionate investment for what it would add.
+
+## Retries block the consumer thread during backoff — LOW (accepted implementation tradeoff)
+
+Per ADR-003's Notes, retries are a blocking loop (`Thread.sleep` between attempts) inside the message handler, not Spring Kafka's non-blocking retry-topic feature. During a backoff window, that consumer thread isn't servicing other partitions it may also own.
+
+**Mitigation stance:** accepted — chosen deliberately for simplicity and testability over the more idiomatic-but-harder-to-verify-blind `@RetryableTopic` approach. Named as a real upgrade path, not a hidden limitation, if consumer throughput under partial outages ever became the actual bottleneck.
 
 ## DLQ reprocessing is undesigned — MEDIUM (open item)
 
 Per `docs/architecture/overview.md`, events land on `wire.transactions.dlq` on terminal failure, but there's no designed mechanism yet for inspecting, correcting, and replaying them back into the pipeline.
 
-**Mitigation stance:** gap, not yet resolved. Not blocking for the documentation phase, but a real ingestion system needs an answer here before this claims to model production operations.
+**Mitigation stance:** gap, not yet resolved. A real ingestion system needs an answer here before this claims to model production operations.
