@@ -12,7 +12,14 @@ spring:
 wire:
   topics:
     raw: wire.transactions.raw
+    raw-partitions: 3
     dlq: wire.transactions.dlq
+    dlq-partitions: 1
+  consumer:
+    # Matches raw-partitions above — one consumer thread per partition, so
+    # concurrent multi-partition consumption is actually exercised instead
+    # of one thread serializing every partition. See docs/RISKS.md.
+    concurrency: 3
   ledger:
     # The base URL of the LEDGER instance this consumer posts to.
     base-url: ${LEDGER_BASE_URL}

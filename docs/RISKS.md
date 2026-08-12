@@ -32,11 +32,17 @@ ADR-003's retry/DLQ claims (transient failures self-heal, terminal failures rout
 
 **Mitigation stance:** resolved for those four scenarios. See the next two entries for what's explicitly **not** independently re-verified by this suite.
 
+## Topic partitioning and consumer concurrency were unconfigured — RESOLVED (was undocumented)
+
+A code-level survey found that neither `wire.transactions.raw`'s partition count nor the consumer's listener concurrency were ever explicitly set. Left to defaults, the broker would create the topic with (typically) a single partition, and `ConcurrentKafkaListenerContainerFactory` defaults to `concurrency=1` — meaning ADR-002's accountId partition key would have had nothing to partition across, silently defeating the entire ordering scheme in both production config and tests, without anything in the code or docs saying so.
+
+**Mitigation stance:** resolved. `KafkaConfig` now declares `NewTopic` beans (`wire.topics.raw-partitions`, default 3) provisioned automatically via Spring's `KafkaAdmin`, and `kafkaListenerContainerFactory` sets `concurrency` (`wire.consumer.concurrency`, default 3, matched to the partition count) so multiple consumer threads genuinely process different partitions concurrently rather than one thread serializing everything.
+
 ## True multi-partition ordering is not independently tested — MEDIUM (accepted, narrowed scope)
 
-ADR-002 claims per-partition-key ordering. WIRE's test suite does not run a genuine concurrent multi-partition load and assert on relative event ordering — that would need meaningfully more test infrastructure than this pass built (see ADR-004's Decision). What WIRE relies on instead is Kafka/Redpanda's own documented per-partition ordering guarantee, applied structurally via the partitioning scheme.
+ADR-002 claims per-partition-key ordering. Now that the topology genuinely has multiple partitions and multiple consumer threads (see above), WIRE's test suite still does not run a load that would provoke and assert on relative event ordering across concurrent partitions — that would need meaningfully more test infrastructure than this pass built (see ADR-004's Decision). What WIRE relies on instead is Kafka/Redpanda's own documented per-partition ordering guarantee, applied structurally via the now-real partitioning scheme.
 
-**Mitigation stance:** accepted. The partitioning *scheme* is real and load-bearing; the *guarantee it depends on* is Kafka's own, not re-derived here. A future pass adding a genuine ordering test (multiple producers, one partition, asserted processing order) would close this gap outright.
+**Mitigation stance:** accepted. The partitioning *scheme* is now genuinely load-bearing (not inert, as it was before the fix above); the *guarantee it depends on* is still Kafka's own, not re-derived here. A future pass adding a genuine ordering test (multiple producers, one partition, asserted processing order) would close this gap outright.
 
 ## Crash-then-redelivery is not independently simulated — MEDIUM (accepted, narrowed scope)
 

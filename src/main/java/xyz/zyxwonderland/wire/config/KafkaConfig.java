@@ -3,6 +3,7 @@ package xyz.zyxwonderland.wire.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
 import java.util.Map;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -11,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
+import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
@@ -34,6 +36,29 @@ public class KafkaConfig {
 
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
+
+    /**
+     * Without an explicit partition count, the broker creates
+     * wire.transactions.raw with its own default (often 1) — which would
+     * silently defeat ADR-002's whole partition-key ordering scheme, since
+     * a single partition makes the key irrelevant. Declaring it here (via
+     * Spring Kafka's KafkaAdmin auto-provisioning) makes the multi-partition
+     * topology this design depends on an explicit, checked-in fact instead
+     * of an unstated assumption. See docs/RISKS.md.
+     */
+    @Bean
+    public NewTopic rawTopic(
+            @Value("${wire.topics.raw}") String rawTopic,
+            @Value("${wire.topics.raw-partitions:3}") int partitions) {
+        return TopicBuilder.name(rawTopic).partitions(partitions).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic dlqTopic(
+            @Value("${wire.topics.dlq}") String dlqTopic,
+            @Value("${wire.topics.dlq-partitions:1}") int partitions) {
+        return TopicBuilder.name(dlqTopic).partitions(partitions).replicas(1).build();
+    }
 
     @Bean
     public ProducerFactory<String, WireTransactionEvent> producerFactory(ObjectMapper objectMapper) {
@@ -86,11 +111,16 @@ public class KafkaConfig {
 
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, WireTransactionEvent> kafkaListenerContainerFactory(
-            ConsumerFactory<String, WireTransactionEvent> consumerFactory) {
+            ConsumerFactory<String, WireTransactionEvent> consumerFactory,
+            @Value("${wire.consumer.concurrency:3}") int concurrency) {
         ConcurrentKafkaListenerContainerFactory<String, WireTransactionEvent> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+        // Matches wire.topics.raw-partitions — one thread per partition, so
+        // concurrent multi-partition consumption is actually exercised, not
+        // just structurally possible. See docs/RISKS.md.
+        factory.setConcurrency(concurrency);
         return factory;
     }
 }
